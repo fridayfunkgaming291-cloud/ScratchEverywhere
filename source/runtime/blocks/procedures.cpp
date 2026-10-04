@@ -1,5 +1,5 @@
 #include "blockUtils.hpp"
-#include <sprite.hpp>
+#include <types.hpp>
 #include <value.hpp>
 
 SCRATCH_BLOCK(procedures, call) {
@@ -7,7 +7,7 @@ SCRATCH_BLOCK(procedures, call) {
 
     if (state->completedSteps == -2) {
     executeBlock:
-        BlockResult result = BlockExecutor::runThread(*state->myBlockThread, *sprite, nullptr);
+        BlockResult result = BlockExecutor::runThread(*state->myBlockThread, *sprite);
         if (result == BlockResult::RETURN || state->myBlockThread->finished) {
             if (outValue) *outValue = state->myBlockThread->returnValue;
 
@@ -24,7 +24,7 @@ SCRATCH_BLOCK(procedures, call) {
     }
 
     if (state->completedSteps == 0) {
-        if (block->MyBlockDefinitionID == nullptr || block->MyBlockDefinitionID->blockFunction == nullptr) {
+        if (block->MyBlockDefinitionID == nullptr) {
             thread->eraseState(block);
             return BlockResult::CONTINUE;
         }
@@ -82,8 +82,9 @@ SCRATCH_BLOCK(procedures, prototype) {
         auto it = thread->MyBlocksVariablen.find(argId);
         if (it != thread->MyBlocksVariablen.end()) {
             if (argName != argId) {
-                thread->MyBlocksVariablen[argName] = std::move(it->second);
+                Value renamedValue = std::move(it->second);
                 thread->MyBlocksVariablen.erase(argId);
+                thread->MyBlocksVariablen[argName] = std::move(renamedValue);
             }
         } else {
             thread->MyBlocksVariablen[argName] = (i < block->argumentDefaults.size())
@@ -96,7 +97,7 @@ SCRATCH_BLOCK(procedures, prototype) {
 
 BlockResult block_procedures_return_(Block *block, ScriptThread *thread, Sprite *sprite, Value *outValue);
 static uint8_t block_procedures_return_reg_ =
-    (BlockExecutor::getHandlers()["procedures_return"] = block_procedures_return_, 0);
+    (BlockExecutor::getHandlers()["procedures_return"] = BlockFunc(block_procedures_return_), 0);
 BlockResult block_procedures_return_(Block *block, ScriptThread *thread, Sprite *sprite, Value *outValue) {
     Value returnVal;
     if (!Scratch::getInputValue(block, "VALUE", thread, sprite, returnVal))

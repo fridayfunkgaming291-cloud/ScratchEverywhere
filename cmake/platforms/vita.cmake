@@ -1,7 +1,7 @@
 set(SE_DEFAULT_OUTPUT_NAME "scratch-vita")
 
-set(SE_RENDERER_VALID_OPTIONS "sdl2")
-set(SE_AUDIO_ENGINE_VALID_OPTIONS "sdl2")
+set(SE_RENDERER_VALID_OPTIONS "sdl1" "sdl2" "sdl3")
+set(SE_AUDIO_ENGINE_VALID_OPTIONS "sdl1" "sdl2" "sdl3")
 set(SE_DEPS_VALID_OPTIONS "fallback" "system")
 set(SE_LUA_BACKEND_VALID_OPTIONS "fallback" "luajit")
 
@@ -22,8 +22,21 @@ set(SE_HAS_MOUSE FALSE)
 set(SE_HAS_KEYBOARD FALSE)
 set(SE_HAS_CONTROLLER TRUE)
 
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -ffast-math -fomit-frame-pointer -ffunction-sections -fdata-sections -fno-exceptions -fno-rtti")
+include(CheckIPOSupported)
+check_ipo_supported(RESULT ipo_supported)
+if(ipo_supported)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+endif()
+
 macro(package_platform)
 	include("${VITASDK}/share/vita.cmake" REQUIRED)
+
+	target_link_options(scratch-everywhere PRIVATE "-Wl,--defsym=__sce_headroom=0x10000")
+
+	target_link_libraries(se-interface INTERFACE SceAppUtil_stub)
+
+	target_link_libraries(se-interface INTERFACE SceShaccCgExt SceShaccCg_stub stdc++ taihen_stub_weak)
 
 	if(EXISTS ${CMAKE_SOURCE_DIR}/romfs/project.sb3)
 		set(PROJ_FILE FILE ${CMAKE_SOURCE_DIR}/romfs/project.sb3 project.sb3)

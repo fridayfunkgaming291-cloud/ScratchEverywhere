@@ -7,10 +7,10 @@
 #include <render.hpp>
 #include <runtime.hpp>
 #include <speech_manager.hpp>
-#include <sprite.hpp>
 #include <sstream>
 #include <string>
 #include <thread.hpp>
+#include <types.hpp>
 #include <vector>
 
 namespace Inspector {
@@ -206,7 +206,7 @@ void processCommands() {
 
                 std::cout << "- Variables:\n";
                 for (auto &[id, v] : target->variables) {
-                    std::cout << "  " << v.name << " = " << v.value.asString() << "\n";
+                    std::cout << "  " << v.name << " = " << BlockExecutor::getVariableValueAs<Value>(&v).asString() << "\n";
                 }
                 std::cout << "- Lists:\n";
                 for (auto &[id, l] : target->lists) {
@@ -307,7 +307,8 @@ void processCommands() {
         queueMutex.unlock();
     }
 
-    for (auto &w : watchedVars) {
+    // TODO: reimplement
+    /* for (auto &w : watchedVars) {
         size_t colon = w.targetStr.find(':');
         Value current;
         if (colon == std::string::npos) {
@@ -335,7 +336,7 @@ void processCommands() {
             std::cout << "[WATCH] " << w.targetStr << " : " << w.lastValue.asString() << " -> " << current.asString() << "\n";
             w.lastValue = current;
         }
-    }
+    } */
 }
 
 } // namespace Inspector

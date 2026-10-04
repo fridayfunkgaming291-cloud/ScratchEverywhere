@@ -1,4 +1,4 @@
-#include "render.hpp"
+#include "render_sdl1.hpp"
 #include "speech_manager_sdl1.hpp"
 #include <SDL.h>
 #include <SDL_gfxBlitFunc.h>
@@ -15,34 +15,45 @@
 #include <math.hpp>
 #include <render.hpp>
 #include <runtime.hpp>
-#include <sprite.hpp>
 #include <string>
 #include <text.hpp>
+#include <types.hpp>
 #include <unordered_map>
 #include <unzip.hpp>
 #include <vector>
 #include <window.hpp>
-#include <windowing/sdl1/window.hpp>
+#include <windowing/sdl1/window_sdl1.hpp>
 
 #ifdef __MINGW32__
 #define filledCircleRGBA GFX_filledCircleRGBA
 #define filledPolygonRGBA GFX_filledPolygonRGBA
 #endif
 
-Window *globalWindow = nullptr;
+WindowSE *globalWindow = nullptr;
+SDL_Surface *mainSurface = nullptr;
 SDL_Surface *penSurface = nullptr;
 
 SpeechManagerSDL1 *speechManager = nullptr;
+
+#if defined(VITA)
+int windowWidth = 960;
+int windowHeight = 544;
+#else
+int windowWidth = 480;
+int windowHeight = 360;
+#endif
 
 bool Render::Init() {
     TTF_Init();
 
     globalWindow = new WindowSDL1();
-    if (!globalWindow->init(540, 405, "Scratch Everywhere!")) {
+    if (!globalWindow->init(windowWidth, windowHeight, "Scratch Everywhere!")) {
         delete globalWindow;
         globalWindow = nullptr;
         return false;
     }
+
+    mainSurface = reinterpret_cast<SDL_Surface *>(getRenderer());
 
     debugMode = true;
 
@@ -89,11 +100,11 @@ SpeechManager *Render::getSpeechManager() {
 
 int Render::getWidth() {
     if (globalWindow) return globalWindow->getWidth();
-    return 540;
+    return windowWidth;
 }
 int Render::getHeight() {
     if (globalWindow) return globalWindow->getHeight();
-    return 405;
+    return windowHeight;
 }
 
 float Render::getPixelDensity() {
@@ -245,28 +256,36 @@ void Render::penClear() {
     SDL_FillRect(penSurface, NULL, SDL_MapRGBA(penSurface->format, 0, 0, 0, 0));
 }
 
+void Render::setRenderTarget(void *renderTarget) {
+    mainSurface = static_cast<SDL_Surface *>(renderTarget);
+}
+
+void Render::clearRenderTarget() {
+    mainSurface = reinterpret_cast<SDL_Surface *>(getRenderer());
+}
+
 void Render::beginFrame(int screen, int colorR, int colorG, int colorB) {
-    SDL_Surface *window = static_cast<SDL_Surface *>(getRenderer());
     if (!hasFrameBegan) {
-        SDL_FillRect(window, NULL, SDL_MapRGB(window->format, colorR, colorG, colorB));
+        SDL_FillRect(mainSurface, NULL, SDL_MapRGB(mainSurface->format, colorR, colorG, colorB));
         hasFrameBegan = true;
     }
 }
 
 void Render::endFrame(bool shouldFlush) {
-    SDL_Flip(static_cast<SDL_Surface *>(getRenderer()));
+    SDL_Surface *windowSurface = static_cast<SDL_Surface *>(getRenderer());
+    if (windowSurface && mainSurface == windowSurface) {
+        SDL_Flip(windowSurface);
+    }
     SDL_Delay(16);
     hasFrameBegan = false;
 }
 
 void Render::drawBox(int w, int h, int x, int y, uint8_t colorR, uint8_t colorG, uint8_t colorB, uint8_t colorA) {
-    SDL_Surface *window = static_cast<SDL_Surface *>(getRenderer());
     SDL_Rect rect = {static_cast<Sint16>(x - (w / 2)), static_cast<Sint16>(y - (h / 2)), static_cast<Uint16>(w), static_cast<Uint16>(h)};
-    SDL_FillRect(window, &rect, SDL_MapRGBA(window->format, colorR, colorG, colorB, colorA));
+    SDL_FillRect(mainSurface, &rect, SDL_MapRGBA(mainSurface->format, colorR, colorG, colorB, colorA));
 }
 
 void drawBlackBars(int screenWidth, int screenHeight) {
-    SDL_Surface *window = static_cast<SDL_Surface *>(Render::getRenderer());
     float screenAspect = static_cast<float>(screenWidth) / screenHeight;
     float projectAspect = static_cast<float>(Scratch::projectWidth) / Scratch::projectHeight;
 
@@ -279,8 +298,8 @@ void drawBlackBars(int screenWidth, int screenHeight) {
         SDL_Rect leftBar = {0, 0, static_cast<Uint16>(std::ceil(barWidth)), static_cast<Uint16>(screenHeight)};
         SDL_Rect rightBar = {static_cast<Sint16>(std::floor(screenWidth - barWidth)), 0, static_cast<Uint16>(std::ceil(barWidth)), static_cast<Uint16>(screenHeight)};
 
-        SDL_FillRect(window, &leftBar, SDL_MapRGB(window->format, 0, 0, 0));
-        SDL_FillRect(window, &rightBar, SDL_MapRGB(window->format, 0, 0, 0));
+        SDL_FillRect(mainSurface, &leftBar, SDL_MapRGB(mainSurface->format, 0, 0, 0));
+        SDL_FillRect(mainSurface, &rightBar, SDL_MapRGB(mainSurface->format, 0, 0, 0));
     } else if (screenAspect < projectAspect) {
         // Horizontal bars,,,
         float scale = static_cast<float>(screenWidth) / Scratch::projectWidth;
@@ -290,14 +309,13 @@ void drawBlackBars(int screenWidth, int screenHeight) {
         SDL_Rect topBar = {0, 0, static_cast<Uint16>(screenWidth), static_cast<Uint16>(std::ceil(barHeight))};
         SDL_Rect bottomBar = {0, static_cast<Sint16>(std::floor(screenHeight - barHeight)), static_cast<Uint16>(screenWidth), static_cast<Uint16>(std::ceil(barHeight))};
 
-        SDL_FillRect(window, &topBar, SDL_MapRGB(window->format, 0, 0, 0));
-        SDL_FillRect(window, &bottomBar, SDL_MapRGB(window->format, 0, 0, 0));
+        SDL_FillRect(mainSurface, &topBar, SDL_MapRGB(mainSurface->format, 0, 0, 0));
+        SDL_FillRect(mainSurface, &bottomBar, SDL_MapRGB(mainSurface->format, 0, 0, 0));
     }
 }
 
 void Render::renderSprites() {
-    SDL_Surface *window = static_cast<SDL_Surface *>(getRenderer());
-    SDL_FillRect(window, NULL, SDL_MapRGB(window->format, 255, 255, 255));
+    SDL_FillRect(mainSurface, NULL, SDL_MapRGB(mainSurface->format, 255, 255, 255));
 
     for (auto it = Scratch::sprites.rbegin(); it != Scratch::sprites.rend(); ++it) {
         Sprite *currentSprite = *it;
@@ -349,7 +367,7 @@ void Render::renderSprites() {
     drawBlackBars(getWidth(), getHeight());
     renderMonitors();
 
-    SDL_Flip(window);
+    // SDL_Flip(window);
     if (globalWindow) globalWindow->swapBuffers();
 }
 
@@ -368,7 +386,7 @@ void Render::renderPenLayer() {
     }
 
     SDL_Surface *zoomedSurface = zoomSurface(penSurface, (float)renderRect.w / penSurface->w, (float)renderRect.h / penSurface->h, SMOOTHING_OFF);
-    SDL_BlitSurface(zoomedSurface, NULL, static_cast<SDL_Surface *>(getRenderer()), &renderRect);
+    SDL_BlitSurface(zoomedSurface, NULL, mainSurface, &renderRect);
     SDL_FreeSurface(zoomedSurface);
 }
 

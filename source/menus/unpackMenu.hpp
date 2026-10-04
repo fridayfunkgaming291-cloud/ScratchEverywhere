@@ -1,7 +1,8 @@
 #pragma once
 #include "mainMenu.hpp"
+#include <se_export.hpp>
 
-class UnpackMenu : public Menu {
+class SE_EXPORT UnpackMenu : public Menu {
   public:
     ControlObject *settingsControl = nullptr;
 

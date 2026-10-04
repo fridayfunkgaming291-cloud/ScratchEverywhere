@@ -10,9 +10,9 @@
 #include <render.hpp>
 #include <unordered_map>
 #include <window.hpp>
-#include <windowing/nds/window.hpp>
+#include <windowing/nds/window_nds.hpp>
 
-Window *globalWindow = nullptr;
+WindowSE *globalWindow = nullptr;
 SpeechManagerGL2D *speechManager = nullptr;
 
 #define SCREEN_WIDTH 256
@@ -49,6 +49,12 @@ void Render::deInit() {
 
 void *Render::getRenderer() {
     return nullptr;
+}
+
+void Render::setRenderTarget(void *renderTarget) {
+}
+
+void Render::clearRenderTarget() {
 }
 
 bool Render::createSpeechManager() {

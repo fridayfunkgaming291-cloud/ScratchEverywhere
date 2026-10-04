@@ -1,5 +1,6 @@
 #include "parser.hpp"
-#include "sprite.hpp"
+#include "blockExecutor.hpp"
+#include "types.hpp"
 #include <algorithm>
 #include <filesystem.hpp>
 #include <input.hpp>
@@ -13,6 +14,7 @@
 #include <settings.hpp>
 #include <unordered_map>
 #include <unzip.hpp>
+#include <variant>
 #if defined(__WIIU__) && defined(ENABLE_CLOUDVARS)
 #include <whb/sdcard.h>
 #endif
@@ -222,13 +224,24 @@ void Parser::loadSprites(const nlohmann::json &json) {
                 Variable newVariable;
                 newVariable.id = id;
                 newVariable.name = data[0];
-                newVariable.value = Value::fromJson(data[1]);
+                Value value = Value::fromJson(data[1]);
+
+                if (value.isDouble()) {
+                    newVariable.value = value.get<double>();
+                } else if (value.isString()) {
+                    newVariable.value = value.getStringPtr();
+                } else if (value.isBoolean()) {
+                    newVariable.value = value.get<bool>();
+                } else {
+                    newVariable.value = std::move(value);
+                }
+
 #ifdef ENABLE_CLOUDVARS
                 newVariable.cloud = data.size() == 3;
                 Scratch::cloudProject = Scratch::cloudProject || newVariable.cloud;
 #endif
                 newSprite->variables[newVariable.id] = newVariable;
-                Parser::log("\t\t" + newVariable.name + " = " + newVariable.value.asString());
+                // Parser::log("\t\t" + newVariable.name + " = " + newVariable.value.asString()); // TODO: reimplement
             }
         }
 
@@ -275,7 +288,7 @@ void Parser::loadSprites(const nlohmann::json &json) {
                 }
                 if (data.contains("bitmapResolution")) {
                     newCostume.bitmapResolution = data["bitmapResolution"];
-                }
+                } else newCostume.bitmapResolution = 1;
                 if (data.contains("dataFormat")) {
                     newCostume.dataFormat = data["dataFormat"];
                     newCostume.isSVG = (newCostume.dataFormat == "svg" || newCostume.dataFormat == "SVG");
@@ -291,6 +304,7 @@ void Parser::loadSprites(const nlohmann::json &json) {
                     newCostume.rotationCenterY = data["rotationCenterY"];
                     if (Scratch::bitmapHalfQuality && !newCostume.isSVG && newCostume.bitmapResolution == 2) newCostume.rotationCenterY /= 2;
                 } else newCostume.rotationCenterY = -6767.6767; // will get changed once costume image is loaded
+                newSprite->costumeNameIndex.emplace(newCostume.name, newSprite->costumes.size());
                 newSprite->costumes.push_back(newCostume);
                 Parser::log("\t\t" + newCostume.name);
             }
@@ -308,6 +322,7 @@ void Parser::loadSprites(const nlohmann::json &json) {
 
         std::vector<std::string> procedureCallBlocks;
 
+        // Blocks
         if (target.contains("blocks") && !target["blocks"].empty()) {
             Parser::log("\tBlocks:");
 
@@ -427,6 +442,8 @@ void Parser::loadSprites(const nlohmann::json &json) {
                         block->MyBlockDefinitionID->MyBlockWithoutScreenRefresh;
                 }
             }
+
+            resolveVariableTypes(newSprite);
         }
 
         Scratch::sprites.push_back(newSprite);
@@ -633,7 +650,7 @@ void Parser::loadAdvancedProjectSettings(const nlohmann::json &json) {
     else Scratch::maxClones = 300;
 }
 
-void Parser::loadInputs(Block &block, Sprite *newSprite, std::string blockKey, const nlohmann::json &blockDatas, int indent) {
+void Parser::loadInputs(Block &block, Sprite *newSprite, const std::string &blockKey, const nlohmann::json &blockDatas, int indent) {
     auto &blockData = blockDatas[blockKey];
     if (!blockData.contains("inputs") || blockData["inputs"].empty()) return;
 
@@ -645,6 +662,8 @@ void Parser::loadInputs(Block &block, Sprite *newSprite, std::string blockKey, c
         delete block;
     };
 
+    block.inputs.reserve(blockData["inputs"].size());
+    block.inputMap.reserve(blockData["inputs"].size());
     for (const auto &[inputName, data] : blockData["inputs"].items()) {
         int type = data[0];
         auto &inputValue = data[1];
@@ -652,7 +671,7 @@ void Parser::loadInputs(Block &block, Sprite *newSprite, std::string blockKey, c
         if (type == 1) {
             if (inputValue.is_array() || block.opcode == "procedures_definition") {
                 block.inputs.push_back({inputName, ParsedInput(Value::fromJson(inputValue))});
-                // block.inputs[inputName] = ParsedInput(Value::fromJson(inputValue));
+                block.inputMap[inputName] = &block.inputs.back().second;
                 if (inputValue.is_array() && inputValue.size() > 1) {
                     std::string valueStr;
                     if (inputValue[1].is_string()) {
@@ -673,19 +692,19 @@ void Parser::loadInputs(Block &block, Sprite *newSprite, std::string blockKey, c
                     const auto &it = getShadowBlocks().find(newBlock->opcode);
                     if (it != getShadowBlocks().end()) {
                         block.inputs.push_back({inputName, ParsedInput(Value(Scratch::getFieldValue(*newBlock, it->second)))});
-                        // block.inputs[inputName] = ParsedInput(Value(Scratch::getFieldValue(*newBlock, it->second)));
+                        block.inputMap[inputName] = &block.inputs.back().second;
                         removeBlock(newBlock);
                         continue;
                     }
 
                     block.inputs.push_back({inputName, ParsedInput(newBlock)});
-                    // block.inputs[inputName] = ParsedInput(newBlock);
+                    block.inputMap[inputName] = &block.inputs.back().second;
                 }
             }
         } else if (type == 2 || type == 3) {
             if (inputValue.is_array()) {
                 block.inputs.push_back({inputName, ParsedInput(inputValue[2].get<std::string>())});
-                // block.inputs[inputName] = ParsedInput(inputValue[2].get<std::string>());
+                block.inputMap[inputName] = &block.inputs.back().second;
                 if (inputValue[0].get<int>() == 13) block.inputs.back().second.list = true;
                 Parser::log(indentStr + "\t" + inputName + ": var[" + inputValue[1].get<std::string>() + "]");
             } else {
@@ -697,7 +716,7 @@ void Parser::loadInputs(Block &block, Sprite *newSprite, std::string blockKey, c
                     const auto &it = getShadowBlocks().find(newBlock->opcode);
                     if (it != getShadowBlocks().end()) {
                         block.inputs.push_back({inputName, ParsedInput(Value(Scratch::getFieldValue(*newBlock, it->second)))});
-                        // block.inputs[inputName] = ParsedInput(Value(Scratch::getFieldValue(*newBlock, it->second)));
+                        block.inputMap[inputName] = &block.inputs.back().second;
                         removeBlock(newBlock);
                         continue;
                     }
@@ -709,6 +728,7 @@ void Parser::loadInputs(Block &block, Sprite *newSprite, std::string blockKey, c
         const ParsedInput *num2 = Scratch::getInput(newBlock, "NUM2");                                                              \
         if (num1 && num2 && num1->inputType == ParsedInput::InputType::VALUE && num2->inputType == ParsedInput::InputType::VALUE) { \
             block.inputs.push_back({inputName, ParsedInput(num1->value OPERATOR num2->value)});                                     \
+            block.inputMap[inputName] = &block.inputs.back().second;                                                                \
             removeBlock(newBlock);                                                                                                  \
             continue;                                                                                                               \
         }                                                                                                                           \
@@ -719,6 +739,7 @@ void Parser::loadInputs(Block &block, Sprite *newSprite, std::string blockKey, c
                     CHECK_NUM_CONSTANT_FOLDING(operator_divide, /)
                     CHECK_NUM_CONSTANT_FOLDING(operator_subtract, -)
                     block.inputs.push_back({inputName, ParsedInput(newBlock)});
+                    block.inputMap[inputName] = &block.inputs.back().second;
                 }
             }
         }
@@ -731,6 +752,8 @@ void Parser::loadFields(Block &block, const std::string &blockKey, const nlohman
 
     std::string indentStr(indent, '\t');
 
+    block.fields.reserve(blockData["fields"].size());
+    block.fieldMap.reserve(blockData["fields"].size());
     for (const auto &[name, field] : blockData["fields"].items()) {
         ParsedField parsedField;
         if (field.is_array() && !field.empty()) {
@@ -744,7 +767,96 @@ void Parser::loadFields(Block &block, const std::string &blockKey, const nlohman
             }
         }
         block.fields.push_back({name, parsedField});
-        // block.fields[name] = parsedField;
+        block.fieldMap[name] = &block.fields.back().second;
+    }
+}
+
+void Parser::resolveVariableTypes(Sprite *sprite) {
+    std::vector<Block *> setVarBlocks;
+    for (Block *block : Scratch::blocks) {
+        if (block->opcode == "data_setvariableto" || block->opcode == "data_changevariableby") {
+            setVarBlocks.push_back(block);
+        }
+    }
+
+    const auto toValue = [](const Variable &v) -> Value {
+        return std::visit([](auto &&arg) -> Value {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, Value>) return arg;
+            else return Value(arg);
+        },
+                          v.value);
+    };
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+
+        for (Block *block : setVarBlocks) {
+            if (block->opcode == "data_changevariableby") {
+                const auto &varId = Scratch::getFieldId(*block, "VARIABLE");
+                Variable *var = BlockExecutor::getVariable(varId, sprite);
+                if (var != nullptr && !std::holds_alternative<Value>(var->value)) {
+                    if (!std::holds_alternative<double>(var->value)) {
+                        var->value = toValue(*var);
+                        changed = true;
+                    }
+                }
+                continue;
+            }
+
+            const auto &varId = Scratch::getFieldId(*block, "VARIABLE");
+            Variable *var = BlockExecutor::getVariable(varId, sprite);
+            if (!var || std::holds_alternative<Value>(var->value)) continue;
+
+            const auto it = block->inputMap.find("VALUE");
+            if (it == block->inputMap.end()) continue;
+
+            const auto &input = it->second;
+            bool shouldDemote = false;
+
+            switch (input->inputType) {
+            case ParsedInput::VALUE:
+                if (std::holds_alternative<double>(var->value) && !input->value.isDouble()) shouldDemote = true;
+                else if (std::holds_alternative<std::shared_ptr<const std::string>>(var->value) && !input->value.isString()) shouldDemote = true;
+                else if (std::holds_alternative<bool>(var->value) && !input->value.isBoolean()) shouldDemote = true;
+                break;
+
+            case ParsedInput::VARIABLE: {
+                Variable *srcVar = BlockExecutor::getVariable(input->variableId, sprite);
+                if (!srcVar) {
+                    shouldDemote = true;
+                } else if (std::holds_alternative<Value>(srcVar->value)) {
+                    shouldDemote = true;
+                } else if (var->value.index() != srcVar->value.index()) {
+                    shouldDemote = true;
+                }
+                break;
+            }
+
+            case ParsedInput::BLOCK:
+                switch (input->block->blockFunction.type) {
+                case Type::Number:
+                    if (!std::holds_alternative<double>(var->value)) shouldDemote = true;
+                    break;
+                case Type::String:
+                    if (!std::holds_alternative<std::shared_ptr<const std::string>>(var->value)) shouldDemote = true;
+                    break;
+                case Type::Boolean:
+                    if (!std::holds_alternative<bool>(var->value)) shouldDemote = true;
+                    break;
+                default:
+                    shouldDemote = true;
+                    break;
+                }
+                break;
+            }
+
+            if (shouldDemote) {
+                var->value = toValue(*var);
+                changed = true;
+            }
+        }
     }
 }
 
@@ -769,7 +881,7 @@ bool Parser::loadExtensions(const nlohmann::json &json) {
         if (FileSystem::fileExists(nativePath)) {
             void *extensionHandle = dlopen(nativePath.c_str(), RTLD_NOW | RTLD_GLOBAL);
             if (!extensionHandle) {
-                Log::logError("Failed to load native extension, '" + targetID + "', dlerror: " + dlerror());
+                Log::logCritical("Failed to load native extension, '" + targetID + "', dlerror: " + dlerror(), false);
             } else {
                 Log::log("Loaded native extension: " + targetID);
                 hasNativeExts = true;
@@ -875,7 +987,7 @@ bool Parser::loadExtensions(const nlohmann::json &json) {
     return hasNativeExts;
 }
 
-Block *Parser::loadBlock(Sprite *newSprite, const std::string id, const nlohmann::json &blockDatas, Block *parentBlock, int indent) {
+Block *Parser::loadBlock(Sprite *newSprite, const std::string &id, const nlohmann::json &blockDatas, Block *parentBlock, int indent) {
     if (!blockDatas.contains(id)) return parentBlock;
     if (!blockDatas[id].contains("opcode")) return parentBlock;
 

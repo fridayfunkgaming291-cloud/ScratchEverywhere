@@ -1,33 +1,51 @@
 #include "value.hpp"
 #include "math.hpp"
 #include <array>
+#include <cctype>
 #include <os.hpp>
 #include <regex>
+#include <string_view>
 
-Value::Value(int val) : value(static_cast<double>(val)) {}
+namespace {
+bool caseInsensitiveEqual(std::string_view a, std::string_view b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](unsigned char x, unsigned char y) {
+               return std::tolower(x) == std::tolower(y);
+           });
+}
 
-Value::Value(double val) : value(val) {}
+bool caseInsensitiveLess(std::string_view a, std::string_view b) {
+    return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), [](unsigned char x, unsigned char y) {
+        return std::tolower(x) < std::tolower(y);
+    });
+}
+} // namespace
 
-Value::Value(std::string val) : value(std::move(val)) {}
+Value::Value(int val) : tag(Tag::Double) { storage.d = static_cast<double>(val); }
 
-Value::Value(bool val) : value(val) {}
+Value::Value(double val) : tag(Tag::Double) { storage.d = val; }
 
-Value::Value(Color val) : value(val) {}
+Value::Value(std::string val) : tag(Tag::String) { new (&storage.s) std::shared_ptr<const std::string>(std::make_shared<const std::string>(std::move(val))); }
 
-Value::Value(Undefined val) : value(val) {}
+Value::Value(std::shared_ptr<const std::string> val) : tag(Tag::String) { new (&storage.s) std::shared_ptr<const std::string>(std::move(val)); }
+
+Value::Value(bool val) : tag(Tag::Bool) { storage.b = val; }
+
+Value::Value(Color val) : tag(Tag::Color) { storage.c = val; }
+
+Value::Value(Undefined) : tag(Tag::Undefined) {}
 
 double Value::asDouble() const {
     if (isDouble()) {
         if (isNaN()) return 0.0;
-        return std::get<double>(value);
+        return storage.d;
     } else if (isString()) {
-        auto &strValue = std::get<std::string>(value);
+        auto &strValue = *storage.s;
         return Math::parseNumber(strValue).value_or(0);
     } else if (isColor()) {
-        const ColorRGBA rgb = CSBT2RGBA(std::get<Color>(value));
+        const ColorRGBA rgb = CSBT2RGBA(storage.c);
         return rgb.r * 0x10000 + rgb.g * 0x100 + rgb.b;
     } else if (isBoolean()) {
-        return std::get<bool>(value) ? 1 : 0;
+        return storage.b ? 1 : 0;
     }
 
     return 0.0;
@@ -35,15 +53,15 @@ double Value::asDouble() const {
 
 std::string Value::asString() const {
     if (isDouble()) {
-        return Math::toString(std::get<double>(value));
+        return Math::toString(storage.d);
     } else if (isString()) {
-        return std::get<std::string>(value);
+        return *storage.s;
     } else if (isBoolean()) {
-        return std::get<bool>(value) ? "true" : "false";
+        return storage.b ? "true" : "false";
     } else if (isUndefined()) {
         return "undefined";
     } else if (isColor()) {
-        const ColorRGBA rgb = CSBT2RGBA(std::get<Color>(value));
+        const ColorRGBA rgb = CSBT2RGBA(storage.c);
         const char hex_chars[] = "0123456789abcdef";
         const unsigned char r = static_cast<unsigned char>(rgb.r);
         const unsigned char g = static_cast<unsigned char>(rgb.g);
@@ -63,18 +81,18 @@ std::string Value::asString() const {
 
 bool Value::asBoolean() const {
     if (isBoolean()) {
-        return std::get<bool>(value);
+        return storage.b;
     }
     if (isDouble()) {
-        return std::get<double>(value) != 0.0 && !isNaN();
+        return storage.d != 0.0 && !isNaN();
     }
     if (isString()) {
-        std::string strValue = std::get<std::string>(value);
+        std::string strValue = *storage.s;
         std::transform(strValue.begin(), strValue.end(), strValue.begin(), ::tolower);
         return strValue != "" && strValue != "0" && strValue != "false";
     }
     if (isColor()) {
-        const ColorRGBA rgb = CSBT2RGBA(std::get<Color>(value));
+        const ColorRGBA rgb = CSBT2RGBA(storage.c);
         return rgb.r != 0 || rgb.g != 0 || rgb.b != 0 || rgb.a != 0;
     }
     return false;
@@ -100,65 +118,69 @@ Color Value::asColor() const {
     return RGBA2CSBO({static_cast<float>(static_cast<unsigned int>(RGBA / 0x10000) % 0x100), static_cast<float>(static_cast<unsigned int>(RGBA / 0x100) % 0x100), static_cast<float>(static_cast<unsigned int>(RGBA) % 0x100), static_cast<float>(static_cast<unsigned int>(RGBA / 0x1000000) % 0x100)});
 }
 
-Value Value::operator+(const Value &other) const {
-    return Value(this->asDouble() + other.asDouble());
-}
-
-Value Value::operator-(const Value &other) const {
-    return Value(this->asDouble() - other.asDouble());
-}
-
-Value Value::operator*(const Value &other) const {
-    return Value(this->asDouble() * other.asDouble());
-}
-
-Value Value::operator/(const Value &other) const {
-    Value a = *this;
-    Value b = other;
-    if (!a.isNumeric()) a = Value(0);
-    if (!b.isNumeric()) b = Value(0);
-
-    return Value(a.asDouble() / b.asDouble());
-}
-
 bool Value::operator==(const Value &other) const {
-    std::string string1 = asString();
-    std::string string2 = other.asString();
+    if (isDouble() && other.isDouble() && !isNaN() && !other.isNaN()) return storage.d == other.storage.d;
+    if (isBoolean() && other.isBoolean()) return storage.b == other.storage.b;
+    if (isColor() && other.isColor()) return storage.c == other.storage.c;
 
-    if (!std::all_of(string1.begin(), string1.end(), [](unsigned char c) { return (std::isspace(c) && c != '\t'); }) &&
-        !std::all_of(string2.begin(), string2.end(), [](unsigned char c) { return (std::isspace(c) && c != '\t'); })) {
+    std::string ownedA, ownedB;
+    const std::string *strA = tryGetStringRef();
+    if (!strA) {
+        ownedA = asString();
+        strA = &ownedA;
+    }
+    const std::string *strB = other.tryGetStringRef();
+    if (!strB) {
+        ownedB = other.asString();
+        strB = &ownedB;
+    }
+
+    if (!std::all_of(strA->begin(), strA->end(), [](unsigned char c) { return (std::isspace(c) && c != '\t'); }) &&
+        !std::all_of(strB->begin(), strB->end(), [](unsigned char c) { return (std::isspace(c) && c != '\t'); })) {
         if (isNumeric() && other.isNumeric() && !isNaN() && !other.isNaN()) {
             return asDouble() == other.asDouble();
         }
     }
 
-    std::transform(string1.begin(), string1.end(), string1.begin(), ::tolower);
-    std::transform(string2.begin(), string2.end(), string2.begin(), ::tolower);
-    return string1 == string2;
+    return caseInsensitiveEqual(*strA, *strB);
 }
 
 bool Value::operator<(const Value &other) const {
     if (isNumeric() && other.isNumeric() && !isNaN() && !other.isNaN()) {
-        return asDouble() < other.asDouble();
+        return get<double>() < other.get<double>();
     }
 
-    std::string string1 = asString();
-    std::string string2 = other.asString();
-    std::transform(string1.begin(), string1.end(), string1.begin(), ::tolower);
-    std::transform(string2.begin(), string2.end(), string2.begin(), ::tolower);
-    return string1 < string2;
+    std::string ownedA, ownedB;
+    const std::string *strA = tryGetStringRef();
+    if (!strA) {
+        ownedA = asString();
+        strA = &ownedA;
+    }
+    const std::string *strB = other.tryGetStringRef();
+    if (!strB) {
+        ownedB = other.asString();
+        strB = &ownedB;
+    }
+    return caseInsensitiveLess(*strA, *strB);
 }
 
 bool Value::operator>(const Value &other) const {
     if (isNumeric() && other.isNumeric() && !isNaN() && !other.isNaN()) {
-        return asDouble() > other.asDouble();
+        return get<double>() > other.get<double>();
     }
 
-    std::string string1 = asString();
-    std::string string2 = other.asString();
-    std::transform(string1.begin(), string1.end(), string1.begin(), ::tolower);
-    std::transform(string2.begin(), string2.end(), string2.begin(), ::tolower);
-    return string1 > string2;
+    std::string ownedA, ownedB;
+    const std::string *strA = tryGetStringRef();
+    if (!strA) {
+        ownedA = asString();
+        strA = &ownedA;
+    }
+    const std::string *strB = other.tryGetStringRef();
+    if (!strB) {
+        ownedB = other.asString();
+        strB = &ownedB;
+    }
+    return caseInsensitiveLess(*strB, *strA);
 }
 
 bool Value::isScratchInt() {

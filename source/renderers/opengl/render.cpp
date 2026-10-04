@@ -1,18 +1,18 @@
-#include "render.hpp"
+#include "render_opengl.hpp"
 #include "speech_manager_gl.hpp"
 #include <image_gl.hpp>
 #include <log.hpp>
 #include <window.hpp>
 #if defined(WINDOWING_GLFW)
-#include <windowing/glfw/window.hpp>
+#include <windowing/glfw/window_glfw.hpp>
 #elif defined(WINDOWING_SDL1)
-#include <windowing/sdl1/window.hpp>
+#include <windowing/sdl1/window_sdl1.hpp>
 #elif defined(WINDOWING_SDL2)
-#include <windowing/sdl2/window.hpp>
+#include <windowing/sdl2/window_sdl2.hpp>
 #elif defined(WINDOWING_SDL3)
-#include <windowing/sdl3/window.hpp>
+#include <windowing/sdl3/window_sdl3.hpp>
 #elif defined(WINDOWING_LIBRETRO)
-#include <windowing/libretro/window.hpp>
+#include <windowing/libretro/window_libretro.hpp>
 #else
 #error "No windowing backend defined"
 #endif
@@ -27,8 +27,8 @@
 #include <math.hpp>
 #include <render.hpp>
 #include <runtime.hpp>
-#include <sprite.hpp>
 #include <string>
+#include <types.hpp>
 #include <unordered_map>
 #include <unzip.hpp>
 #include <vector>
@@ -37,7 +37,7 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-Window *globalWindow = nullptr;
+WindowSE *globalWindow = nullptr;
 
 SpeechManagerGL *speechManager = nullptr;
 
@@ -60,7 +60,7 @@ bool Render::Init() {
 #error "No windowing backend defined"
 #endif
 
-    if (!globalWindow->init(540, 405, "Scratch Everywhere!")) {
+    if (!globalWindow->init(480, 360, "Scratch Everywhere!")) {
         delete globalWindow;
         globalWindow = nullptr;
         return false;
@@ -108,6 +108,13 @@ void Render::deInit() {
 
 void *Render::getRenderer() {
     return nullptr;
+}
+
+void Render::setRenderTarget(void *renderTarget) {
+    Log::logWarning("Render::setRenderTarget is not supported by the legacy OpenGL renderer");
+}
+
+void Render::clearRenderTarget() {
 }
 
 bool Render::createSpeechManager() {

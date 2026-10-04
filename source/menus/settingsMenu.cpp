@@ -1,8 +1,18 @@
 #include "settingsMenu.hpp"
+#include "hasdeps.hpp"
 #include "languageMenu.hpp"
 #include "menuObjects.hpp"
 #include "settings.hpp"
 #include "translation.hpp"
+#if defined(_WIN32) || defined(_WIN64) || defined(__APPLE__) || (defined(__linux__) && !defined(__ANDROID__) && !defined(WEBOS) && !defined(LIBRETRO)) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__) || (defined(__sun) && defined(__SVR4))
+#include <libdlgmod/libdlgmod.h>
+#if defined(_WIN32) || defined(_WIN64)
+#include <algorithm>
+#endif
+#if !defined(USE_LIBDLGMOD)
+#define USE_LIBDLGMOD
+#endif
+#endif
 #include <filesystem.hpp>
 #include <log.hpp>
 
@@ -187,7 +197,7 @@ void SettingsMenu::render() {
     if (ClearCache->isPressed({"a"})) {
         const auto rderr = FileSystem::removeDirectory(OS::getScratchFolderLocation() + "cache/");
         const auto cderr = FileSystem::createDirectory(OS::getScratchFolderLocation() + "cache/");
-        if (!rderr.has_value() || !cderr.has_value()) Log::logError("Failed to clear cache.");
+        if (!rderr.has_value() || !cderr.has_value()) Log::logCritical("Failed to clear cache.", false);
     }
 
     if (EnableMenuMusic->isPressed({"a"})) {
@@ -203,6 +213,9 @@ void SettingsMenu::render() {
     if (EnableCustomFolderPath->isPressed({"a"}) && OS::getScratchFolderLocation() != OS::getConfigFolderLocation()) {
         UseProjectsPath = !UseProjectsPath;
         updateButtonStates();
+
+        OS::customProjectsPath = nullptr;
+        OS::loadedSettings = false;
     }
 
     if (ChangeUsername->isPressed({"a"})) {
@@ -225,12 +238,37 @@ void SettingsMenu::render() {
     }
 
     if (ChangeFolderPath->isPressed({"a"})) {
+
+#if defined(USE_LIBDLGMOD)
+
+        // FIXME: Translate this into every localization supported by SE!
+        const char *folder_picker_dialog_titlebar_caption = "Select a custom path to load *.sb3 Scratch project files...";
+
+#if defined(_WIN32) || defined(_WIN64) || defined(__APPLE__) || (defined(__linux__) && !defined(__ANDROID__) && !defined(WEBOS) && !defined(LIBRETRO)) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__) || (defined(__sun) && defined(__SVR4))
+
+        std::string newPathGui = get_directory_alt(folder_picker_dialog_titlebar_caption, "");
+
+#if defined(_WIN32) || defined(_WIN64)
+        std::replace(newPathGui.begin(), newPathGui.end(), '\\', '/'); // Normalize path separators
+#endif
+
+        const std::string newPath = ((newPathGui.empty()) ? ((!hasdeps()) ? Input::openSoftwareKeyboard(projectsPath.c_str()) : projectsPath) : newPathGui);
+
+#endif
+
+#else
+
         const std::string newPath = Input::openSoftwareKeyboard(projectsPath.c_str());
+
+#endif
+
         if (newPath.length() > 0) {
             projectsPath = newPath;
-
             updateButtonStates();
         }
+
+        OS::customProjectsPath = nullptr;
+        OS::loadedSettings = false;
     }
 
     if (Language->isPressed({"a"})) {

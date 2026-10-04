@@ -2,9 +2,9 @@
 #include <speech_manager.hpp>
 #include <unordered_map>
 #include <window.hpp>
-#include <windowing/headless/window.hpp>
+#include <windowing/headless/window_headless.hpp>
 
-Window *globalWindow = nullptr;
+WindowSE *globalWindow = nullptr;
 
 bool Render::Init() {
     globalWindow = new WindowHeadless();
@@ -22,6 +22,12 @@ void Render::deInit() {
 
 void *Render::getRenderer() {
     return nullptr;
+}
+
+void Render::setRenderTarget(void *renderTarget) {
+}
+
+void Render::clearRenderTarget() {
 }
 
 bool Render::createSpeechManager() {

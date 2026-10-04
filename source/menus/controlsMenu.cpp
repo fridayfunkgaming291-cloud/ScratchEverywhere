@@ -1,6 +1,6 @@
 #include "controlsMenu.hpp"
-#include "sprite.hpp"
 #include "translation.hpp"
+#include "types.hpp"
 #include <log.hpp>
 #include <settings.hpp>
 
@@ -17,7 +17,7 @@ void ControlsMenu::init() {
 
     Unzip::filePath = OS::getScratchFolderLocation() + projectPath + ".sb3";
     if (!Unzip::load()) {
-        Log::logError("Failed to load project for ControlsMenu.");
+        Log::logCritical("Failed to load project for ControlsMenu.", false);
         OS::toExit = true;
         return;
     }
@@ -31,20 +31,20 @@ void ControlsMenu::init() {
         if (block->opcode == "sensing_keypressed") {
             const ParsedInput *input = Scratch::getInput(block, "KEY_OPTION");
             if (input != nullptr && input->inputType == ParsedInput::VALUE) {
-                buttonCheck = input->value.asString();
+                buttonCheck = input->value.get<std::string>();
             }
         } else if (block->opcode == "event_whenkeypressed") {
             buttonCheck = Scratch::getFieldValue(*block, "KEY_OPTION");
         } else if (block->opcode == "makeymakey_whenMakeyKeyPressed") {
             const ParsedInput *input = Scratch::getInput(block, "KEY");
             if (input != nullptr && input->inputType == ParsedInput::VALUE) {
-                buttonCheck = input->value.asString();
+                buttonCheck = input->value.get<std::string>();
             }
         } else if (block->opcode == "makeymakey_whenCodePressed") {
             const ParsedInput *input = Scratch::getInput(block, "SEQUENCE");
             if (input == nullptr || input->inputType != ParsedInput::VALUE) continue;
 
-            std::string inputSequence = input->value.asString();
+            std::string inputSequence = input->value.get<std::string>();
             size_t start = 0;
             size_t end;
             while ((end = inputSequence.find(' ', start)) != std::string::npos) {
